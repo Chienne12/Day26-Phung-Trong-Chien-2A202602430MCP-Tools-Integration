@@ -123,10 +123,9 @@ root_agent = Agent(
 3. **Timeout errors**: Server not started
    - Start the MCP server first, then the ADK client
 
-### Fallback Mode
+### MCP connection check
 
-If MCP connection fails, the agent runs in fallback mode without tools.
-Fix the connection and restart ADK web.
+Run `uv run python verify_setup.py` with the MCP server running. The script checks the MCP handshake, the three tool names, and `health_check`. If connection fails, fix the server URL or restart the server before using the agent.
 
 ## Environment Variables
 

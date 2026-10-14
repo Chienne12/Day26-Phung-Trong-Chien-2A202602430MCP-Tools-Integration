@@ -3,6 +3,7 @@
 Verification script for Weather Agent setup
 Checks if all components are configured correctly
 """
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -14,7 +15,7 @@ def check_environment():
     env_file = Path(".env")
     if not env_file.exists():
         print("❌ .env file not found")
-        print("   Run: echo 'GOOGLE_API_KEY=your_key' > .env")
+        print("   Create .env with GOOGLE_API_KEY=<your_key>")
         return False
     
     # Check if GOOGLE_API_KEY is set
@@ -27,7 +28,7 @@ def check_environment():
         print("   Get key from: https://aistudio.google.com/apikey")
         return False
     
-    print(f"✅ GOOGLE_API_KEY configured ({api_key[:10]}...)")
+    print("✅ GOOGLE_API_KEY configured")
     return True
 
 def check_dependencies():
@@ -78,9 +79,9 @@ def check_agent_structure():
     
     return all_exist
 
-def check_mcp_server():
-    """Check if MCP server is accessible"""
-    print("\n🔍 Checking MCP server connectivity...")
+async def check_mcp_server():
+    """Check the MCP handshake, tool list, and health tool."""
+    print("\n🔍 Checking MCP server tools...")
 
     # Cùng URL mà weather_agent/agent.py dùng (biến môi trường MCP_SERVER_URL)
     from dotenv import load_dotenv
@@ -88,20 +89,29 @@ def check_mcp_server():
     server_url = os.getenv("MCP_SERVER_URL", "http://localhost:8085/mcp")
 
     try:
-        import httpx
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
 
-        response = httpx.get(server_url, timeout=10.0)
-        # GET thuần lên endpoint MCP thường bị từ chối (400/405/406) vì thiếu
-        # header/session MCP — nhưng có phản hồi nghĩa là server đang chạy.
-        if response.status_code < 500:
-            print(f"✅ MCP server reachable at {server_url} (HTTP {response.status_code})")
-            return True
-        print(f"⚠️  MCP server returned status {response.status_code}")
-        return False
+        async with streamablehttp_client(server_url) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                names = {tool.name for tool in tools.tools}
+                expected = {"get_current_weather", "get_forecast", "health_check"}
+                if not expected.issubset(names):
+                    print(f"❌ Missing MCP tools: {sorted(expected - names)}")
+                    return False
 
+                result = await session.call_tool("health_check")
+                if result.isError:
+                    print("❌ MCP health_check returned an error")
+                    return False
+
+                print(f"✅ MCP tools available at {server_url}: {', '.join(sorted(names))}")
+                return True
     except Exception as e:
-        print(f"❌ Cannot reach MCP server at {server_url}: {e}")
-        print("   Start it: cd ../mcp-server && uv run python weather.py")
+        print(f"❌ Cannot use MCP tools at {server_url}: {e}")
+        print("   Start it from ../mcp-server with: uv run python weather.py")
         return False
 
 def check_agent_import():
@@ -132,7 +142,7 @@ def main():
         check_environment(),
         check_dependencies(),
         check_agent_structure(),
-        check_mcp_server(),
+        asyncio.run(check_mcp_server()),
         check_agent_import(),
     ]
     

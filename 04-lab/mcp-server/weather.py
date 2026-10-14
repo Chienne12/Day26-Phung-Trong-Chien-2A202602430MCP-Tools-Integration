@@ -1,8 +1,11 @@
 from typing import Any
-import asyncio
+import logging
 import httpx
 import os
 from mcp.server.fastmcp import FastMCP
+
+# WeatherAPI authenticates through a query parameter; httpx INFO logs include URLs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Initialize FastMCP server
 port = int(os.getenv("PORT", 8085))
@@ -36,13 +39,18 @@ async def make_weather_request(endpoint: str, params: dict[str, str]) -> dict[st
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            print(f"HTTP Error {e.response.status_code}: {e.response.text}")
+            print(f"WeatherAPI HTTP {e.response.status_code}")
+            try:
+                if e.response.json().get("error", {}).get("code") == 1006:
+                    return {"error": "No matching location found."}
+            except (ValueError, AttributeError):
+                pass
             return None
         except httpx.RequestError as e:
-            print(f"Request Error: {e}")
+            print(f"WeatherAPI request failed: {type(e).__name__}")
             return None
         except Exception as e:
-            print(f"Unexpected error: {e}")
+            print(f"WeatherAPI request failed: {type(e).__name__}")
             return None
 
 @mcp.tool()
@@ -52,6 +60,9 @@ async def get_current_weather(city: str) -> str:
     Args:
         city: City name (e.g., "Hanoi", "Haiphong", "Danang", "Brisbane", "Sydney")
     """
+    if not city.strip():
+        return "Please provide a city name."
+
     params = {
         "q": city,
         "aqi": "no"
@@ -59,6 +70,8 @@ async def get_current_weather(city: str) -> str:
     
     data = await make_weather_request("current.json", params)
 
+    if data and data.get("error"):
+        return f"Unable to find city {city}: {data['error']}"
     if not data:
         if not API_KEY:
             return f"❌ WeatherAPI key not configured. Please set WEATHERAPI_KEY environment variable with your API key from weatherapi.com"
@@ -66,9 +79,10 @@ async def get_current_weather(city: str) -> str:
 
     current = data["current"]
     location = data["location"]
+    location_name = ", ".join(part for part in (location["name"], location["region"], location["country"]) if part)
     
     return f"""
-Current Weather for {location['name']}, {location['region']}, {location['country']}:
+Current Weather for {location_name}:
 
 Temperature: {current['temp_c']}°C ({current['temp_f']}°F)
 Feels like: {current['feelslike_c']}°C ({current['feelslike_f']}°F)
@@ -90,8 +104,10 @@ async def get_forecast(city: str, days: int = 3) -> str:
         city: City name (e.g., "Hanoi", "Haiphong", "Danang", "Brisbane", "Sydney", "Melbourne")
         days: Number of days to forecast (1-3 for free tier, max 10 for paid)
     """
-    # Limit days to 3 for free tier
-    days = min(days, 3)
+    if not city.strip():
+        return "Please provide a city name."
+    if not 1 <= days <= 3:
+        return "Please choose a forecast length from 1 to 3 days."
     
     params = {
         "q": city,
@@ -102,16 +118,19 @@ async def get_forecast(city: str, days: int = 3) -> str:
     
     data = await make_weather_request("forecast.json", params)
 
+    if data and data.get("error"):
+        return f"Unable to find city {city}: {data['error']}"
     if not data:
         if not API_KEY:
             return f"❌ WeatherAPI key not configured. Please set WEATHERAPI_KEY environment variable with your API key from weatherapi.com"
         return f"Unable to fetch forecast data for {city}. Please check the city name and API key configuration."
 
     location = data["location"]
+    location_name = ", ".join(part for part in (location["name"], location["region"], location["country"]) if part)
     forecast_days = data["forecast"]["forecastday"]
     
     forecasts = []
-    forecasts.append(f"Weather Forecast for {location['name']}, {location['region']}, {location['country']}:")
+    forecasts.append(f"Weather Forecast for {location_name}:")
     
     for day in forecast_days:
         day_data = day["day"]
@@ -139,14 +158,5 @@ print("✅ MCP server initialized with Streamable HTTP transport")
 print("🔧 Available tools: get_current_weather, get_forecast, health_check")
 
 if __name__ == "__main__":
-    import sys
-    
-    is_cloud_run = bool(os.getenv("PORT"))
-    is_standalone = len(sys.argv) == 1 and sys.stdin.isatty()
-    
-    if is_cloud_run or is_standalone:
-        print(f"🚀 Starting MCP server on http://0.0.0.0:{port}/mcp")
-        mcp.run(transport="streamable-http")
-    else:
-        print("Starting FastMCP server in stdio mode for local client", file=sys.stderr)
-        mcp.run()
+    print(f"🚀 Starting MCP server on http://0.0.0.0:{port}/mcp")
+    mcp.run(transport="streamable-http")

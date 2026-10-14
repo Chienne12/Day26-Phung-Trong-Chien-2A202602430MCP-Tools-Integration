@@ -80,6 +80,29 @@ uv run adk web
 
 Open http://localhost:8000 in your browser, select `weather_agent`, and ask about the weather.
 
+### Windows PowerShell (chạy từ thư mục gốc repo)
+
+Terminal 1 — MCP server:
+
+```powershell
+cd .\04-lab\mcp-server
+uv sync --locked
+$env:WEATHERAPI_KEY = "<WeatherAPI key>"
+uv run python weather.py
+```
+
+Terminal 2 — ADK agent:
+
+```powershell
+cd .\04-lab\mcp-client
+uv sync --locked
+[System.IO.File]::WriteAllText((Join-Path (Get-Location) '.env'), 'GOOGLE_API_KEY=<Google API key>')
+uv run python verify_setup.py
+uv run adk web
+```
+
+`verify_setup.py` thực hiện MCP handshake, kiểm tra danh sách 3 tools và gọi `health_check`. Sau đó mở `http://localhost:8000`, chọn `weather_agent`, hỏi thời tiết hiện tại và dự báo 3 ngày ở Hanoi để kiểm tra hai weather tools với API key thật. Lệnh tạo `.env` ở trên ghi UTF-8 không có BOM để `python-dotenv` đọc được; file này đã được Git bỏ qua.
+
 ## Configuration
 
 | Variable | Where | Description |
